@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:16.3-alpine
+    working_dir: /var/lib/postgresql/data
+    restart: no
+    ports:
+      - ${DB_PORT:-5432}:${DB_PORT:-5432}
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+      POSTGRES_DB: ${DB_NAME}
+    healthcheck:
+      test: ["CMD", "pg_isready", "-p", "${DB_PORT:-5432}", "-U", "postgres"]
+      interval: 20s
+      timeout: 5s
+      retries: 2
+    volumes:
+      - postgresql_data:/var/lib/postgresql/data
+    logging:
+      driver: 'json-file'
+      options:
+        max-size: '200m'
+    command: -p ${DB_PORT:-5432} -c 'datestyle=iso, dmy'
+
+volumes:
+  postgresql_data:
