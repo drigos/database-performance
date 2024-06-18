@@ -1,0 +1,29 @@
+{
+  "name": "database-performance",
+  "description": "Project to test performance in databases",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+      "node": ">=20.0.0",
+      "npm": ">=10.0.0"
+  },
+  "config": {
+      "commitizen": {
+          "path": "cz-conventional-changelog"
+      }
+  },
+  "scripts": {
+    "prepare": "husky",
+    "commit": "cz",
+    "upgrade": "ncu -u"
+  },
+  "devDependencies": {
+      "@commitlint/cli": "^19.0.3",
+      "@commitlint/config-conventional": "^19.2.2",
+      "commitizen": "^4.3.0",
+      "cz-conventional-changelog": "^3.3.0",
+      "husky": "^9.0.11",
+      "npm-check-updates": "^16.14.15",
+      "prettier": "^3.2.5"
+  }
+}
