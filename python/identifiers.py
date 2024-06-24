@@ -1,6 +1,7 @@
 import time
 import os
 import random
+from pprint import pprint
 from datetime import timedelta
 
 import psycopg2
@@ -9,10 +10,18 @@ from dotenv import load_dotenv
 
 load_dotenv('../.env')
 
+# TODO: criar e truncar tabelas antes dos testes
+# TODO: salvar os resultados como CSV
+# TODO: imprimir resultados em formato de tabela
 
-NUM_RECORDS = 10_000
-BATCH_SIZE = 1
-NUM_SIMULATIONS = int(NUM_RECORDS / 100)
+
+INSERT_TIER_1 = 1_000_000 // 1_000
+INSERT_TIER_2 = 10_000_000 // 1_000
+BATCH_SIZE_TIER_1 = 1_000 // 1_000
+BATCH_SIZE_TIER_2 = 10_000 // 1_000
+BATCH_SIZE_TIER_3 = 100_000 // 1_000
+NUM_SIMULATIONS = 1_000_000 // 1_000
+SKIP_ROWS = INSERT_TIER_2
 
 
 def connect_db():
@@ -25,19 +34,9 @@ def connect_db():
     )
 
 
-def print_banner():
-    print('-' * 40)
-    print(f'NUM_RECORDS (R): {NUM_RECORDS}')
-    print(f'BATCH_SIZE (B): {BATCH_SIZE}')
-    print(f'NUM_INSERTS (I): {NUM_RECORDS // BATCH_SIZE}')
-    print(f'NUM_SIMULATIONS (S): {NUM_SIMULATIONS}')
-    print('-' * 40)
-    print()
-
-
-def insert_many_records(conn, table_name, num_records=NUM_RECORDS, batch_size=BATCH_SIZE):
+def test_insert_many_records(conn, table_name, num_records, batch_size):
     with conn.cursor() as cur:
-        tqdm_desc = f'Inserting data into {table_name}'
+        tqdm_desc = f'Inserting {num_records} records in batch of {batch_size} into {table_name}'
         tqdm_miniters = int(num_records / (100 * batch_size))
         start_time = time.time()
         for _ in tqdm(range(0, num_records, batch_size), desc=tqdm_desc, miniters=tqdm_miniters):
@@ -46,136 +45,137 @@ def insert_many_records(conn, table_name, num_records=NUM_RECORDS, batch_size=BA
             cur.execute(query, data)
         conn.commit()
         end_time = time.time()
-    insert_time_records[table_name] = end_time - start_time
+        measurements[table_name][f'insert_{num_records}_batched_{batch_size}'] = (end_time - start_time) * 1000
 
 
-def insert_one_record(conn, table_name):
-    with conn.cursor() as cur:
-        cur.execute(f'INSERT INTO {table_name} (data) VALUES (%s) RETURNING id', ('some_data',))
-        id = cur.fetchone()[0]
-        conn.commit()
-    return id
-
-
-def fetch_many_records(conn, table_name, num_records=NUM_SIMULATIONS):
+def test_fetch_many_records(conn, table_name, num_records):
+    print(f'Fetching {num_records} records from {table_name}')
     with conn.cursor() as cur:
         start_time = time.time()
-        cur.execute(f'SELECT id FROM {table_name} LIMIT {num_records}')
+        cur.execute(f'SELECT id FROM {table_name} LIMIT %s', (num_records,))
         records = cur.fetchall()
         end_time = time.time()
-    batch_query_time_records[table_name] = (end_time - start_time) * 1000
+        measurements[table_name]['fetch_many_records'] = (end_time - start_time) * 1000
     return [record[0] for record in records]
 
 
-def fetch_one_record(conn, table_name, id):
-    with conn.cursor() as cur:
-        start_time = time.time()
-        cur.execute(f"SELECT * FROM {table_name} WHERE id = %s", (id,))
-        cur.fetchone()
-        end_time = time.time()
-    query_time_records[table_name] = (end_time - start_time) * 1000
-
-
-def monte_carlo_simulation(conn, table_name, ids, num_simulations=NUM_SIMULATIONS):
+def test_fetch_record_by_id(conn, table_name, ids, num_simulations):
     with conn.cursor() as cur:
         total_time = 0
-        for _ in tqdm(range(num_simulations), desc=f'Querying data from {table_name}', miniters=(num_simulations/100)):
+        for _ in tqdm(range(num_simulations), desc=f'Fetching record by ID from {table_name}', miniters=(num_simulations/100)):
             id = random.choice(ids)
             start_time = time.time()
-            cur.execute(f"SELECT * FROM {table_name} WHERE id = %s", (id,))
+            cur.execute(f'SELECT * FROM {table_name} WHERE id = %s', (id,))
             cur.fetchone()
             end_time = time.time()
             total_time += end_time - start_time
-        avg_query_time_records[table_name] = (total_time / num_simulations) * 1000
+        measurements[table_name]['fetch_record_by_id'] = (total_time / num_simulations) * 1000
 
 
-def rank_performance(records):
-    return sorted(records.items(), key=lambda x: x[1])
-
-
-def print_performance_ranking(records):
-    ranking = rank_performance(records)
-    print()
-    print('Performance Ranking:')
-    for i, (table, time) in enumerate(ranking):
-        print(f'{i+1}. {format(round(time, 6), ".6f")}: {table}')
-    print()
-
-
-def print_insert_time(records):
-    for table, time in records.items():
-        print(f'Insert Time: {format(round(time, 6), ".6f")} seconds ({table})')
-
-
-def print_query_time(records):
-    for table, time in records.items():
-        print(f'Query Time: {format(round(time, 6), ".6f")} milliseconds ({table})')
-
-
-def print_batch_query_time(records):
-    for table, time in records.items():
-        print(f'Batch Query Time: {format(round(time, 6), ".6f")} milliseconds ({table})')
-
-
-def print_avg_query_time(records):
-    for table, time in records.items():
-        print(f'Avg Query Time: {format(round(time, 6), ".6f")} milliseconds ({table})')
-
-
-tables = [
-    't_serial',
-    't_uuid_v4_type_uuid',
-    't_uuid_v7_type_uuid',
-    't_ulid_type_uuid',
-    't_uuid_v4_type_char',
-    't_uuid_v7_type_char',
-    't_ulid_type_char',
-    't_ulid_type_base32'
-]
-
-insert_time_records = {}
-query_time_records = {}
-batch_query_time_records = {}
-avg_query_time_records = {}
-
-def main():
-    print_banner()
-
-    conn = connect_db()
-
-    for table in tables:
-        insert_many_records(conn, table)
-
-    print()
-    print_insert_time(insert_time_records)
-    print_performance_ranking(insert_time_records)
-
+def test_fetch_random_record(conn, table_name, skip_rows, num_simulations):
     with conn.cursor() as cur:
-        print('Analyzing tables...\n')
+        total_time = 0
+        for _ in tqdm(range(num_simulations), desc=f'Fetching random record from {table_name}', miniters=(num_simulations/100)):
+            start_time = time.time()
+            cur.execute(f'SELECT id FROM {table_name} OFFSET {skip_rows} LIMIT 1')
+            cur.fetchone()
+            end_time = time.time()
+            total_time += end_time - start_time
+        measurements[table_name]['fetch_random_record'] = (total_time / num_simulations) * 1000
+
+
+def test_count_records(conn, table_name):
+    print(f'Counting records in {table_name}')
+    with conn.cursor() as cur:
+        start_time = time.time()
+        cur.execute(f'SELECT COUNT(*) FROM {table_name}')
+        count = cur.fetchone()[0]
+        end_time = time.time()
+        measurements[table_name]['count_records'] = (end_time - start_time) * 1000
+    return count
+
+
+def test_indexes_size(conn, table_name):
+    print(f'Calculating indexes size for {table_name}')
+    with conn.cursor() as cur:
+        cur.execute('SELECT pg_size_pretty(pg_indexes_size(%s))', (table_name,))
+        size = cur.fetchone()[0]
+        measurements[table_name]['indexes_size'] = size
+    return size
+
+
+def analyse_table(conn):
+    with conn.cursor() as cur:
         cur.execute('ANALYZE')
         conn.commit()
 
-    for table in tables:
-        id = insert_one_record(conn, table)
-        fetch_one_record(conn, table, id)
 
-    print_query_time(query_time_records)
-    print_performance_ranking(query_time_records)
+def truncate_table(conn, table_name):
+    with conn.cursor() as cur:
+        cur.execute(f'TRUNCATE TABLE {table_name} RESTART IDENTITY CASCADE')
+        conn.commit()
 
-    for table in tables:
-        records = fetch_many_records(conn, table)
-        monte_carlo_simulation(conn, table, records)
+
+def run_tests(conn, table_name):
+    measurements[table_name] = {}
+
+    for batch_size in (1, BATCH_SIZE_TIER_1, BATCH_SIZE_TIER_2):
+        test_insert_many_records(conn, table_name, INSERT_TIER_1, batch_size)
+        analyse_table(conn)
+        truncate_table(conn, table_name)
+
+    for batch_size in (BATCH_SIZE_TIER_1, BATCH_SIZE_TIER_2):
+        test_insert_many_records(conn, table_name, INSERT_TIER_2, batch_size)
+        analyse_table(conn)
+        truncate_table(conn, table_name)
+
+    # Keep the records for the next test
+    test_insert_many_records(conn, table_name, INSERT_TIER_2, BATCH_SIZE_TIER_3)
+    analyse_table(conn)
+
+    records = test_fetch_many_records(conn, table_name, NUM_SIMULATIONS)
+    test_fetch_record_by_id(conn, table_name, records, NUM_SIMULATIONS)
+    test_fetch_random_record(conn, table_name, SKIP_ROWS, NUM_SIMULATIONS)
+
+    test_count_records(conn, table_name)
+
+    test_indexes_size(conn, table_name)
 
     print()
-    print_batch_query_time(batch_query_time_records)
-    print_performance_ranking(batch_query_time_records)
-    print_avg_query_time(avg_query_time_records)
-    print_performance_ranking(avg_query_time_records)
+
+# Tests
+# - 1M inserts, batch size = 10k
+# - 1M inserts, batch size = 1k
+# - 1M inserts
+# - 10M inserts, batch size = 100k
+# - 10M inserts, batch size = 10k
+# - 10M inserts, batch size = 1k
+# - Get 1M IDs
+# - Get by ID from 20M records, simulation size = 1M, random ids = 1M
+# - Skip 10M records and take 1, simulation size = 1M
+# - Count, simulation size = 1M
+# - Index size with 20M records
+measurements = {}
+
+def main():
+    conn = connect_db()
+
+    tables = [
+        't_serial',
+        't_uuid_v4',
+        't_uuid_v4_custom',
+        't_uuid_v7_custom',
+    ]
+
+    for table in tables:
+        run_tests(conn, table)
+
+    pprint(measurements)
 
     conn.close()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     start_time = time.time()
     main()
     end_time = time.time()
